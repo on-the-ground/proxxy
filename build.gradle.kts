@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "io.github.joohyung-park"
-version = "0.2.1"
+version = "0.2.2"
 
 java {
     toolchain {
@@ -53,8 +53,8 @@ mavenPublishing {
 
     pom {
         name.set("proxxy")
-        description.set("Thread-safe, partitioned proxy for Java interfaces — routes method calls by affinity key to dedicated daemon threads.")
-        url.set("https://github.com/joohyung-park/proxxy")
+        description.set("Thread-safe, partitioned proxy for Java interfaces — routes method calls by a caller-supplied router function to dedicated daemon threads.")
+        url.set("https://github.com/on-the-ground/proxxy")
 
         licenses {
             license {
@@ -72,9 +72,9 @@ mavenPublishing {
         }
 
         scm {
-            connection.set("scm:git:git://github.com/joohyung-park/proxxy.git")
-            developerConnection.set("scm:git:ssh://github.com/joohyung-park/proxxy.git")
-            url.set("https://github.com/joohyung-park/proxxy")
+            connection.set("scm:git:git://github.com/on-the-ground/proxxy.git")
+            developerConnection.set("scm:git:ssh://github.com/on-the-ground/proxxy.git")
+            url.set("https://github.com/on-the-ground/proxxy")
         }
     }
 }

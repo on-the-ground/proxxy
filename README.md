@@ -1,25 +1,27 @@
 # proxxy
 
 A tiny Java library that wraps any interface in a thread-safe, partitioned proxy.  
-Methods are routed to dedicated daemon threads by an **affinity key**, so calls sharing the same key always execute on the same thread — no locks needed.
+Methods are routed to dedicated daemon threads by a caller-supplied **router function**, so calls sharing the same routing key always execute on the same thread — no locks needed.
 
 ## How it works
 
-1. You annotate one parameter on each interface method with `@Proxxy.AffinityKey`.
+1. You supply a `router` function that maps each call — the invoked `Method` and its arguments — to an `int`.
 2. `Proxxy.start()` spawns *N* daemon threads and creates one target instance per thread (via a factory you provide).
-3. At runtime, each call is hashed by its affinity key and dispatched to the matching thread, where it runs against that thread's private target instance.
+3. At runtime, each call is routed by `router` value (mod *N*) and dispatched to the matching thread, where it runs against that thread's private target instance.
 
-Same key → same thread → same instance. Different keys may run concurrently on different threads, but each thread owns its instance exclusively — no sharing, no synchronization required.
+Same routing value → same thread → same instance. Different values may run concurrently on different threads, but each thread owns its instance exclusively — no sharing, no synchronization required.
 
 ## Usage
 
 ```java
 interface OrderProcessor {
-    String process(@Proxxy.AffinityKey String userId, String orderId);
+    String process(String userId, String orderId);
 }
 
-// Each of the 16 partitions gets its own MyProcessor instance
-try (var handle = Proxxy.start(OrderProcessor.class, MyProcessor::new, 16, 1024)) {
+// Each of the 16 partitions gets its own MyProcessor instance.
+// The router picks the partition; here it routes by userId (the first argument).
+try (var handle = Proxxy.start(OrderProcessor.class, MyProcessor::new, 16, 1024,
+        (method, args) -> args[0].hashCode())) {
     OrderProcessor proxy = handle.proxy();
 
     proxy.process("alice", "ORD-1");  // always runs on alice's partition thread
@@ -32,8 +34,9 @@ try (var handle = Proxxy.start(OrderProcessor.class, MyProcessor::new, 16, 1024)
 
 ## Rules
 
-- Every method on the proxied interface must have **exactly one** `@Proxxy.AffinityKey` parameter. `Proxxy.start()` throws `IllegalArgumentException` at startup if this is violated.
-- `void` methods are fire-and-forget: the caller returns immediately and exceptions from the target are silently dropped.
+- The `router` is called on **every** invocation; its return value is taken modulo `partitionCount`, so any `int` is valid. Unchecked exceptions thrown by the router propagate directly to the caller.
+- `Proxxy.start()` throws `IllegalArgumentException` at startup if `interfaceType` is not an interface.
+- `void` methods are fire-and-forget: the caller returns immediately and exceptions from the target are reported to the thread's uncaught-exception handler.
 - Non-`void` methods block until the result (or exception) is returned from the partition thread.
 
 ## Requirements

@@ -7,18 +7,17 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * A one-shot reply channel for request-reply effects.
+ * A one-shot reply channel for request-reply hand-off between threads.
  *
- * <p>The performer creates a {@code Reply}, includes it in a request req, and blocks
- * on {@link #await()}. The handler calls {@link #send} to deliver the result and unblock
- * the performer, or {@link #cancel} to unblock it with a {@link CancellationException}.
+ * <p>The caller creates a {@code Reply}, hands it to the partition thread as part of an
+ * invocation, and blocks on {@link #await()}. The partition thread calls {@link #send} to
+ * deliver the result and unblock the caller, {@link #fail} to unblock it with a thrown
+ * cause, or {@link #cancel} to unblock it with a {@link CancellationException}.
  *
  * <pre>{@code
- * record EchoRequest(String text, Reply<String> reply) {}
- *
  * var reply = new Reply<String>();
- * HandlerScope.perform(ECHO, new EchoRequest("hello", reply));
- * String result = reply.await();  // blocks until handler calls send()
+ * // ... hand `reply` to the partition thread, which eventually calls reply.send("hello") ...
+ * String result = reply.await();  // blocks until the partition thread settles the reply
  * }</pre>
  *
  * @param <R> the result type
@@ -31,7 +30,7 @@ public final class Reply<R> {
     private final CompletableFuture<R> future = new CompletableFuture<>();
 
     /**
-     * Sends {@code result} to the performer, unblocking any thread waiting on {@link #await()}.
+     * Sends {@code result} to the caller, unblocking any thread waiting on {@link #await()}.
      *
      * @param result the result to deliver
      */
@@ -52,7 +51,7 @@ public final class Reply<R> {
     public void fail(Throwable cause) { future.completeExceptionally(cause); }
 
     /**
-     * Blocks until the handler calls {@link #send} or {@link #cancel}.
+     * Blocks until the partition thread calls {@link #send}, {@link #fail}, or {@link #cancel}.
      *
      * @return the result passed to {@link #send}
      * @throws CancellationException if {@link #cancel} was called
