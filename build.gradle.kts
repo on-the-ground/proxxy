@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "io.github.joohyung-park"
-version = "0.2.2"
+version = "0.2.3"
 
 java {
     toolchain {
@@ -19,7 +19,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.github.joohyung-park:daemonizer:0.1.2")
+    implementation("io.github.joohyung-park:daemonizer:0.2.0")
     testImplementation(platform("org.junit:junit-bom:6.0.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

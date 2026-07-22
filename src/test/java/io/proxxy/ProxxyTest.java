@@ -49,7 +49,7 @@ class ProxxyTest {
         Set<Long> threadIds = ConcurrentHashMap.newKeySet();
 
         try (var handle = Proxxy.start(Greeter.class, () -> userId -> {
-            threadIds.add(Thread.currentThread().getId());
+            threadIds.add(Thread.currentThread().threadId());
             return "Hello " + userId;
         }, 4, 64, BY_FIRST_ARG)) {
             for (int i = 0; i < 50; i++) {
@@ -119,7 +119,7 @@ class ProxxyTest {
         Set<Long> threadIds = ConcurrentHashMap.newKeySet();
 
         try (var handle = Proxxy.start(Greeter.class, () -> userId -> {
-            threadIds.add(Thread.currentThread().getId());
+            threadIds.add(Thread.currentThread().threadId());
             return userId;
         }, 4, 64, FIXED_ZERO)) {
             handle.proxy().greet("alice");

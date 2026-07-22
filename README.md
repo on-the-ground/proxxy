@@ -35,9 +35,10 @@ try (var handle = Proxxy.start(OrderProcessor.class, MyProcessor::new, 16, 1024,
 ## Rules
 
 - The `router` is called on **every** invocation; its return value is taken modulo `partitionCount`, so any `int` is valid. Unchecked exceptions thrown by the router propagate directly to the caller.
-- `Proxxy.start()` throws `IllegalArgumentException` at startup if `interfaceType` is not an interface.
+- `Proxxy.start()` throws `IllegalArgumentException` at startup if `interfaceType` is not an interface, or if `partitionCount` is not positive.
 - `void` methods are fire-and-forget: the caller returns immediately and exceptions from the target are reported to the thread's uncaught-exception handler.
 - Non-`void` methods block until the result (or exception) is returned from the partition thread.
+- Invocations already enqueued when `close()` is called are drained and executed before shutdown completes. Calling `close()` concurrently with an in-flight call from another thread is not covered by this guarantee — make sure all in-flight calls have returned before closing.
 
 ## Requirements
 
@@ -47,12 +48,12 @@ try (var handle = Proxxy.start(OrderProcessor.class, MyProcessor::new, 16, 1024,
 
 **Gradle (Kotlin DSL)**
 ```kotlin
-implementation("io.github.joohyung-park:proxxy:0.2.1")
+implementation("io.github.joohyung-park:proxxy:0.2.3")
 ```
 
 **Gradle (Groovy DSL)**
 ```groovy
-implementation 'io.github.joohyung-park:proxxy:0.2.1'
+implementation 'io.github.joohyung-park:proxxy:0.2.3'
 ```
 
 **Maven**
@@ -60,7 +61,7 @@ implementation 'io.github.joohyung-park:proxxy:0.2.1'
 <dependency>
     <groupId>io.github.joohyung-park</groupId>
     <artifactId>proxxy</artifactId>
-    <version>0.2.1</version>
+    <version>0.2.3</version>
 </dependency>
 ```
 

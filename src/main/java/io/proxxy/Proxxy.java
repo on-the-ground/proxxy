@@ -1,5 +1,6 @@
 package io.proxxy;
 
+import io.github.ontheground.daemonizer.Daemon;
 import io.github.ontheground.daemonizer.PartitionedDaemon;
 
 import java.lang.invoke.MethodHandle;
@@ -10,6 +11,7 @@ import java.lang.reflect.Proxy;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 import java.util.function.ToIntBiFunction;
 
@@ -40,7 +42,7 @@ public final class Proxxy {
     private static final Object[] EMPTY_ARGS = {};
 
     private interface InvocationTask {
-        Object invoke() throws Throwable;
+        Object invoke(Object target) throws Throwable;
     }
 
     private record Invocation(InvocationTask task, Reply<Object> reply, int routingHash) {}
@@ -69,17 +71,21 @@ public final class Proxxy {
      * modulo {@code partitionCount}, so any integer is valid.
      *
      * <p>The returned {@link ProxyHandle} must be closed to shut down the backing daemon
-     * threads. Pending non-void calls complete before shutdown; queued void calls may be dropped.
+     * threads. Invocations already enqueued by the time {@code close()} is called are drained
+     * and executed before shutdown completes. An invocation whose {@code pushEvent} call races
+     * with a concurrent {@code close()} from another thread is not covered by this guarantee —
+     * callers should ensure all in-flight calls have returned before closing.
      *
      * @param interfaceType          the interface to proxy; must be an interface
      * @param targetFactory          called once per partition to produce a target instance
-     * @param partitionCount         number of independent partitions (threads + target instances)
+     * @param partitionCount         number of independent partitions (threads + target instances); must be positive
      * @param bufferSizePerPartition capacity of each partition's event queue
      * @param router                 maps (method, args) to a routing hash; any int is valid;
      *                               unchecked exceptions thrown by the router propagate directly to the caller
      * @param <T>                    the interface type
      * @return a handle holding the proxy and its lifecycle
-     * @throws IllegalArgumentException if {@code interfaceType} is not an interface
+     * @throws IllegalArgumentException if {@code interfaceType} is not an interface, or if
+     *                                  {@code partitionCount} is not positive
      */
     @SuppressWarnings("unchecked")
     public static <T> ProxyHandle<T> start(
@@ -95,6 +101,9 @@ public final class Proxxy {
 
         if (!interfaceType.isInterface()) {
             throw new IllegalArgumentException(interfaceType.getName() + " is not an interface.");
+        }
+        if (partitionCount <= 0) {
+            throw new IllegalArgumentException("partitionCount must be greater than 0.");
         }
 
         T[] targets = (T[]) new Object[partitionCount];
@@ -113,28 +122,10 @@ public final class Proxxy {
             }
         }
 
-        var daemon = new PartitionedDaemon<Invocation>(
-                partitionCount,
-                bufferSizePerPartition,
-                invocation -> invocation.routingHash(),
-                (invocation, thread) -> {
-                    Reply<Object> reply = invocation.reply();
-                    if (reply == null) {
-                        try {
-                            invocation.task().invoke();
-                        } catch (Throwable t) {
-                            thread.getUncaughtExceptionHandler().uncaughtException(thread, t);
-                        }
-                        return;
-                    }
-                    try {
-                        reply.send(invocation.task().invoke());
-                    } catch (Throwable t) {
-                        reply.fail(t);
-                    }
-                });
+        var daemon = createDaemon(targets, bufferSizePerPartition);
 
-        InvocationHandler handler = (proxy, method, args) -> {
+        // Runs on the caller thread: intercepts the call and dispatches it into the queue.
+        InvocationHandler dispatchHandler = (proxy, method, args) -> {
 
             if (method.getDeclaringClass() == Object.class) {
                 return switch (method.getName()) {
@@ -147,13 +138,12 @@ public final class Proxxy {
 
             Object[] actualArgs = args == null ? EMPTY_ARGS : args;
             int routingHash = router.applyAsInt(method, actualArgs) & 0x7fff_ffff;
-            T target = targets[routingHash % partitionCount];
 
             boolean isVoid = method.getReturnType() == void.class;
             Reply<Object> reply = isVoid ? null : new Reply<>();
 
             MethodHandle mh = methodHandles.get(method);
-            var invocation = new Invocation(() -> {
+            var invocation = new Invocation(target -> {
                 Object[] argsWithTarget = new Object[actualArgs.length + 1];
                 argsWithTarget[0] = target;
                 System.arraycopy(actualArgs, 0, argsWithTarget, 1, actualArgs.length);
@@ -172,11 +162,35 @@ public final class Proxxy {
             return isVoid ? null : reply.await();
         };
 
-        T proxy = (T) Proxy.newProxyInstance(
-                interfaceType.getClassLoader(),
-                new Class<?>[]{interfaceType},
-                handler);
+        T proxy = (T) Proxy.newProxyInstance(interfaceType.getClassLoader(), new Class<?>[]{interfaceType}, dispatchHandler);
 
         return new ProxyHandle<>(proxy, daemon);
+    }
+
+    private static PartitionedDaemon<Invocation> createDaemon(Object[] targets, int bufferSizePerPartition) {
+        return new PartitionedDaemon<>(
+                idx -> new Daemon<>(bufferSizePerPartition, invocationConsumerFor(targets[idx])),
+                targets.length,
+                Invocation::routingHash);
+    }
+
+    // Runs on the partition's daemon thread: dequeues and executes a queued invocation against its bound target.
+    private static BiConsumer<Invocation, Thread> invocationConsumerFor(Object target) {
+        return (invocation, thread) -> {
+            Reply<Object> reply = invocation.reply();
+            if (reply == null) {
+                try {
+                    invocation.task().invoke(target);
+                } catch (Throwable t) {
+                    thread.getUncaughtExceptionHandler().uncaughtException(thread, t);
+                }
+                return;
+            }
+            try {
+                reply.send(invocation.task().invoke(target));
+            } catch (Throwable t) {
+                reply.fail(t);
+            }
+        };
     }
 }
